@@ -1,6 +1,5 @@
-# OI Scanner Pro
-
-Professional Open Interest Scanner
+# OI-Scanner-Pro
+OI Scanner Pro
 
 ## Version
 
@@ -21,3 +20,4 @@ Professional cryptocurrency market scanner with:
 - TradingView Style Interface
 - Telegram Alerts
 - SQLite Database
+
