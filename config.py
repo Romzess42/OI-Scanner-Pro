@@ -1,0 +1,14 @@
+APP_NAME = "OI Scanner Pro"
+VERSION = "0.1.0"
+
+LANGUAGE = "en"
+
+DATABASE_NAME = "oi_scanner.db"
+
+DEFAULT_EXCHANGE = "Bybit"
+
+DEFAULT_THEME = "Dark"
+
+TELEGRAM_ENABLED = False
+
+LICENSE_ENABLED = True
