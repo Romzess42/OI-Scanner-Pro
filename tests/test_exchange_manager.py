@@ -3,6 +3,8 @@
 from unittest import TestCase
 
 from api.exchange_manager import ExchangeManager
+from api.binance import BinanceClient
+from api.okx import OKXClient
 
 
 class FakeClient:
@@ -17,6 +19,26 @@ class FakeClient:
 
 
 class ExchangeManagerTests(TestCase):
+    def test_binance_ohlc_is_normalized(self):
+        class CandleClient(BinanceClient):
+            def _get(self, path, params=None):
+                return [["1000", "1", "3", "0.5", "2"], ["2000", "2", "4", "1", "3"]]
+
+        candles = CandleClient().fetch_ohlc("BTCUSDT", "15m", 2)
+
+        self.assertEqual(candles[0]["timestamp_ms"], 1000.0)
+        self.assertEqual(candles[-1]["close"], 3.0)
+
+    def test_okx_ohlc_is_reversed_to_chronological_order(self):
+        class CandleClient(OKXClient):
+            def _get(self, path, params):
+                return [["2000", "2", "4", "1", "3"], ["1000", "1", "3", "0.5", "2"]]
+
+        candles = CandleClient().fetch_ohlc("BTC-USDT-SWAP", "15m", 2)
+
+        self.assertEqual(candles[0]["timestamp_ms"], 1000.0)
+        self.assertEqual(candles[-1]["close"], 3.0)
+
     def test_selects_all_or_one_registered_exchange(self):
         manager = ExchangeManager(
             [FakeClient("Bybit"), FakeClient("Binance"), FakeClient("OKX")]

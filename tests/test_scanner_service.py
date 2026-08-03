@@ -62,6 +62,32 @@ class FakeHistoryRepository:
 
 
 class ScannerServiceTests(TestCase):
+    def test_bybit_liquidation_message_is_normalized(self):
+        events = BybitClient.parse_liquidation_message(
+            {
+                "topic": "allLiquidation.BTCUSDT",
+                "data": [
+                    {"T": 1_700_000_000_000, "s": "BTCUSDT", "S": "Buy", "v": "2.5", "p": "100000"},
+                    {"T": "invalid", "s": "BTCUSDT", "S": "Sell", "v": "1", "p": "1"},
+                ],
+            }
+        )
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].exchange, "Bybit")
+        self.assertEqual(events[0].side, "Buy")
+        self.assertEqual(events[0].quantity, 2.5)
+
+    def test_bybit_ohlc_is_chronological_and_normalized(self):
+        class CandleClient(BybitClient):
+            def _get(self, path, params):
+                return {"result": {"list": [["2000", "2", "4", "1", "3"], ["1000", "1", "3", "0.5", "2"]]}}
+
+        candles = CandleClient().fetch_ohlc("BTCUSDT", "15m", limit=2)
+
+        self.assertEqual(candles[0]["timestamp_ms"], 1000.0)
+        self.assertEqual(candles[1]["close"], 3.0)
+
     def test_refresh_normalizes_and_sorts_tickers_by_volume(self):
         client = FakeBybitClient()
         history = FakeHistoryRepository()

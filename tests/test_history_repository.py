@@ -9,7 +9,7 @@ from tempfile import TemporaryDirectory
 from unittest import TestCase
 
 from database.database import HistoryRepository
-from scanner.models import ScannerItem
+from scanner.models import LiquidationEvent, ScannerItem
 
 
 class HistoryRepositoryTests(TestCase):
@@ -84,6 +84,21 @@ class HistoryRepositoryTests(TestCase):
             self.assertEqual(persisted[0]["exchange"], "Bybit")
             self.assertEqual(persisted[0]["symbol"], "BTCUSDT")
             self.assertEqual(persisted[0]["message"], "Long Buildup")
+
+    def test_persists_and_deduplicates_liquidations(self):
+        with TemporaryDirectory() as directory:
+            repository = HistoryRepository(f"{directory}/history.db")
+            event = LiquidationEvent(
+                exchange="Bybit", symbol="BTCUSDT", timestamp_ms=1_700_000_000_000,
+                side="Buy", quantity=2.0, price=100_000.0,
+            )
+
+            repository.save_liquidations([event, event])
+
+            events = repository.get_liquidations("Bybit", "BTCUSDT")
+            self.assertEqual(len(events), 1)
+            self.assertEqual(events[0]["side"], "Buy")
+            self.assertEqual(events[0]["quantity"], 2.0)
 
     @staticmethod
     def _item(

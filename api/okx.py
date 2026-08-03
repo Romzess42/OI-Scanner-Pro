@@ -65,6 +65,37 @@ class OKXClient(ExchangeClient):
                     result[futures[future]] = value
         return result
 
+    def fetch_ohlc(
+        self, symbol: str, timeframe: str, limit: int = 200
+    ) -> list[dict[str, float]]:
+        """Return chronological public swap candles for Instrument Analysis."""
+        try:
+            bar = self.TIMEFRAME_BARS[timeframe]
+        except KeyError as error:
+            raise ValueError(f"Unsupported OKX timeframe: {timeframe}") from error
+        candles = self._get(
+            "/api/v5/market/candles",
+            {"instId": symbol, "bar": bar, "limit": limit},
+        )
+        result: list[dict[str, float]] = []
+        # OKX returns newest candle first.
+        for candle in reversed(candles):
+            if not isinstance(candle, list) or len(candle) < 5:
+                continue
+            try:
+                result.append(
+                    {
+                        "timestamp_ms": float(candle[0]),
+                        "open": float(candle[1]),
+                        "high": float(candle[2]),
+                        "low": float(candle[3]),
+                        "close": float(candle[4]),
+                    }
+                )
+            except (TypeError, ValueError):
+                continue
+        return result
+
     def _fetch_details(self, symbols: list[str]) -> dict[str, dict[str, Any]]:
         details: dict[str, dict[str, Any]] = {}
         with ThreadPoolExecutor(max_workers=self.MAX_DETAILS_WORKERS) as executor:

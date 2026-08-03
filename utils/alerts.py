@@ -32,7 +32,7 @@ class LocalAlertManager:
         thresholds: SignalThresholds,
         now: datetime | None = None,
     ) -> list[LocalAlert]:
-        """Return new alerts that exceed OI and volume alert thresholds."""
+        """Return new signal alerts that meet all configured thresholds."""
         current_time = now or datetime.now(timezone.utc)
         alerts: list[LocalAlert] = []
 
@@ -64,6 +64,7 @@ class LocalAlertManager:
             and abs(item.oi_change_pct) >= thresholds.alert_oi_change
             and item.volume_change_pct is not None
             and abs(item.volume_change_pct) >= thresholds.alert_volume_change
+            and item.score >= thresholds.alert_score
         )
 
     @staticmethod
@@ -72,6 +73,7 @@ class LocalAlertManager:
             item.symbol,
             f"OI {item.oi_change_pct * 100:+.2f}%",
             f"Volume {item.volume_change_pct * 100:+.2f}%",
+            f"Score {item.score}",
             item.signal.value,
         ]
         if (

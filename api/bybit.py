@@ -10,6 +10,7 @@ from urllib.parse import urlencode
 from urllib.request import urlopen
 
 from api.exchange_client import ExchangeClient
+from scanner.models import LiquidationEvent
 
 
 class BybitAPIError(RuntimeError):
@@ -30,11 +31,56 @@ class BybitClient(ExchangeClient):
         return {"op": "subscribe", "args": [f"tickers.{symbol}" for symbol in symbols]}
 
     @staticmethod
+    def liquidation_topics(symbols: Iterable[str]) -> list[str]:
+        """Return public all-liquidation topics for the requested contracts."""
+        return [f"allLiquidation.{symbol}" for symbol in dict.fromkeys(symbols)]
+
+    @staticmethod
     def parse_ticker_message(message: Mapping[str, Any]) -> dict[str, Any] | None:
         data = message.get("data")
         if not isinstance(data, dict) or not data.get("symbol"):
             return None
         return {"symbol": data["symbol"], "lastPrice": data.get("lastPrice"), "turnover24h": data.get("turnover24h"), "openInterest": data.get("openInterest"), "fundingRate": data.get("fundingRate"), "price24hPcnt": data.get("price24hPcnt")}
+
+    @staticmethod
+    def parse_liquidation_message(message: Mapping[str, Any]) -> list[LiquidationEvent]:
+        """Normalize Bybit's public ``allLiquidation`` snapshot payload.
+
+        Invalid records are discarded deliberately: the application must never
+        invent liquidation data if an exchange sends an incomplete message.
+        """
+        topic = message.get("topic")
+        data = message.get("data")
+        if not isinstance(topic, str) or not topic.startswith("allLiquidation."):
+            return []
+        if not isinstance(data, list):
+            return []
+
+        events: list[LiquidationEvent] = []
+        for record in data:
+            if not isinstance(record, Mapping):
+                continue
+            try:
+                symbol = str(record["s"])
+                timestamp_ms = int(record["T"])
+                side = str(record["S"])
+                quantity = float(record["v"])
+                price = float(record["p"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if not symbol or side not in {"Buy", "Sell"} or quantity < 0 or price < 0:
+                continue
+            events.append(
+                LiquidationEvent(
+                    exchange="Bybit",
+                    symbol=symbol,
+                    timestamp_ms=timestamp_ms,
+                    side=side,
+                    quantity=quantity,
+                    price=price,
+                )
+            )
+        return events
 
     TIMEFRAME_INTERVALS = {
         "15m": "15",
@@ -102,6 +148,31 @@ class BybitClient(ExchangeClient):
                     close_prices[symbol] = close_price
 
         return close_prices
+
+    def fetch_ohlc(
+        self,
+        symbol: str,
+        timeframe: str,
+        limit: int = 200,
+    ) -> list[dict[str, float]]:
+        """Return chronological completed OHLC candles for Instrument Analysis."""
+        try:
+            interval = self.TIMEFRAME_INTERVALS[timeframe]
+        except KeyError as error:
+            raise ValueError(f"Unsupported Bybit timeframe: {timeframe}") from error
+        response = self._get(
+            "/v5/market/kline",
+            {"category": "linear", "symbol": symbol, "interval": interval, "limit": limit},
+        )
+        result: list[dict[str, float]] = []
+        for candle in reversed(response.get("result", {}).get("list", [])):
+            if not isinstance(candle, list) or len(candle) < 5:
+                continue
+            try:
+                result.append({"timestamp_ms": float(candle[0]), "open": float(candle[1]), "high": float(candle[2]), "low": float(candle[3]), "close": float(candle[4])})
+            except (TypeError, ValueError):
+                continue
+        return result
 
     def _fetch_usdt_perpetual_symbols(self) -> set[str]:
         symbols: set[str] = set()

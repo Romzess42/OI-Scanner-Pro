@@ -269,6 +269,13 @@ class MainWindow(QMainWindow):
 
     def _apply_realtime_message(self, exchange: str, payload: dict) -> None:
         """Apply normalized ticker data received from an exchange WebSocket."""
+        if exchange == "Bybit":
+            from api.bybit import BybitClient
+
+            liquidations = BybitClient.parse_liquidation_message(payload)
+            if liquidations:
+                HistoryRepository(DATABASE_NAME).save_liquidations(liquidations)
+                return
         update = self._parse_realtime_payload(exchange, payload)
         if update is None:
             return
@@ -308,7 +315,9 @@ class MainWindow(QMainWindow):
             symbols = list(dict.fromkeys(symbols))[:REALTIME_SYMBOL_LIMIT]
             if exchange == "Bybit":
                 from api.bybit import BybitClient
-                self.realtime.start(exchange, BybitClient.WEBSOCKET_URL, BybitClient.ticker_subscription(symbols))
+                subscription = BybitClient.ticker_subscription(symbols)
+                subscription["args"].extend(BybitClient.liquidation_topics(symbols))
+                self.realtime.start(exchange, BybitClient.WEBSOCKET_URL, subscription)
             elif exchange == "Binance":
                 from api.binance import BinanceClient
                 self.realtime.start(exchange, BinanceClient.ticker_stream_url(symbols), None)
@@ -382,6 +391,7 @@ class MainWindow(QMainWindow):
             alert_oi_change=float(settings.value("alerts/oi", 0.20)),
             alert_volume_change=float(settings.value("alerts/volume", 0.20)),
             alert_funding_rate=float(settings.value("alerts/funding", 0.0001)),
+            alert_score=int(settings.value("alerts/score", 6)),
         )
 
     def _save_thresholds(self) -> None:
@@ -389,6 +399,7 @@ class MainWindow(QMainWindow):
         settings.setValue("alerts/oi", self.thresholds.alert_oi_change)
         settings.setValue("alerts/volume", self.thresholds.alert_volume_change)
         settings.setValue("alerts/funding", self.thresholds.alert_funding_rate)
+        settings.setValue("alerts/score", self.thresholds.alert_score)
 
     def _check_license(self) -> None:
         settings = QSettings("OI Scanner Pro", "OI Scanner Pro")

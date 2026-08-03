@@ -80,6 +80,38 @@ class BinanceClient(ExchangeClient):
                     result[futures[future]] = value
         return result
 
+    def fetch_ohlc(
+        self, symbol: str, timeframe: str, limit: int = 200
+    ) -> list[dict[str, float]]:
+        """Return chronological USD-M Futures candles for Instrument Analysis."""
+        try:
+            interval = self.TIMEFRAME_INTERVALS[timeframe]
+        except KeyError as error:
+            raise ValueError(f"Unsupported Binance timeframe: {timeframe}") from error
+        candles = self._get(
+            "/fapi/v1/klines",
+            {"symbol": symbol, "interval": interval, "limit": limit},
+        )
+        if not isinstance(candles, list):
+            raise BinanceAPIError("Binance returned an invalid candle list.")
+        result: list[dict[str, float]] = []
+        for candle in candles:
+            if not isinstance(candle, list) or len(candle) < 5:
+                continue
+            try:
+                result.append(
+                    {
+                        "timestamp_ms": float(candle[0]),
+                        "open": float(candle[1]),
+                        "high": float(candle[2]),
+                        "low": float(candle[3]),
+                        "close": float(candle[4]),
+                    }
+                )
+            except (TypeError, ValueError):
+                continue
+        return result
+
     def _fetch_details(self, symbols: list[str]) -> dict[str, dict[str, Any]]:
         details: dict[str, dict[str, Any]] = {}
         with ThreadPoolExecutor(max_workers=self.MAX_DETAILS_WORKERS) as executor:

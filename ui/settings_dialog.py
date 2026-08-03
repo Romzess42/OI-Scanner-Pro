@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
+    QSpinBox,
     QLineEdit,
 )
 
@@ -32,10 +33,14 @@ class SettingsDialog(QDialog):
             thresholds.alert_funding_rate * 100,
             decimals=3,
         )
+        self.score_threshold = QSpinBox()
+        self.score_threshold.setRange(0, 100)
+        self.score_threshold.setValue(thresholds.alert_score)
 
         layout.addRow("Alert OI threshold", self.oi_threshold)
         layout.addRow("Alert Volume threshold", self.volume_threshold)
         layout.addRow("Funding threshold", self.funding_threshold)
+        layout.addRow("Minimum Score for alert", self.score_threshold)
         self.telegram_token = QLineEdit()
         self.telegram_chat_id = QLineEdit()
         self.license_key = QLineEdit()
@@ -67,6 +72,7 @@ class SettingsDialog(QDialog):
             alert_oi_change=self.oi_threshold.value() / 100,
             alert_volume_change=self.volume_threshold.value() / 100,
             alert_funding_rate=self.funding_threshold.value() / 100,
+            alert_score=self.score_threshold.value(),
         )
 
     def external_settings(self) -> dict[str, str]:

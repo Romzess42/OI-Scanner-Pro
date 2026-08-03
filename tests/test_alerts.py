@@ -27,6 +27,12 @@ class LocalAlertManagerTests(TestCase):
             1,
         )
 
+    def test_does_not_emit_when_score_is_below_the_configured_threshold(self):
+        item = self._item()
+        thresholds = SignalThresholds(alert_score=item.score + 1)
+
+        self.assertEqual(LocalAlertManager().collect([item], thresholds), [])
+
     @staticmethod
     def _item() -> ScannerItem:
         return ScannerItem(
@@ -43,4 +49,5 @@ class LocalAlertManagerTests(TestCase):
             funding_rate=0.0002,
             updated_at=datetime.now(timezone.utc),
             signal=SignalType.LONG_BUILDUP,
+            score=6,
         )

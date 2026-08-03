@@ -41,3 +41,19 @@ class ScannerItem:
     funding_change: float | None = None
     signal: SignalType = SignalType.NONE
     score: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class LiquidationEvent:
+    """One public liquidation reported by an exchange market-data stream.
+
+    ``side`` retains the exchange position side.  On Bybit, ``Buy`` denotes a
+    liquidated long position and ``Sell`` denotes a liquidated short position.
+    """
+
+    exchange: str
+    symbol: str
+    timestamp_ms: int
+    side: str
+    quantity: float
+    price: float

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from config import (
     DEFAULT_ALERT_FUNDING_THRESHOLD,
     DEFAULT_ALERT_OI_THRESHOLD,
+    DEFAULT_ALERT_SCORE_THRESHOLD,
     DEFAULT_ALERT_VOLUME_THRESHOLD,
 )
 from scanner.models import ScannerItem, SignalType
@@ -31,6 +32,7 @@ class SignalThresholds:
     alert_oi_change: float = DEFAULT_ALERT_OI_THRESHOLD
     alert_volume_change: float = DEFAULT_ALERT_VOLUME_THRESHOLD
     alert_funding_rate: float = DEFAULT_ALERT_FUNDING_THRESHOLD
+    alert_score: int = DEFAULT_ALERT_SCORE_THRESHOLD
 
 
 def determine_signal(item: ScannerItem) -> SignalType:

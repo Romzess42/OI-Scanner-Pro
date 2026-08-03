@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 
-from scanner.models import ScannerItem
+from scanner.models import LiquidationEvent, ScannerItem
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,6 +146,47 @@ class HistoryRepository:
             rows = connection.execute("SELECT timestamp_ms, exchange, symbol, message FROM alert_journal ORDER BY timestamp_ms DESC LIMIT ?", (limit,)).fetchall()
         return [dict(row) for row in rows]
 
+    def save_liquidations(self, events: Iterable[LiquidationEvent]) -> None:
+        """Persist public liquidation events, ignoring duplicate stream retries."""
+        rows = [
+            (
+                event.exchange,
+                event.symbol,
+                event.timestamp_ms,
+                event.side,
+                event.quantity,
+                event.price,
+            )
+            for event in events
+        ]
+        if not rows:
+            return
+        with closing(self._connect()) as connection, connection:
+            connection.executemany(
+                """
+                INSERT OR IGNORE INTO liquidations
+                    (exchange, symbol, timestamp_ms, side, quantity, price)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+
+    def get_liquidations(
+        self, exchange: str, symbol: str, limit: int = 500
+    ) -> list[dict[str, object]]:
+        """Return chronological public liquidation events for one instrument."""
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT timestamp_ms, side, quantity, price
+                FROM liquidations
+                WHERE exchange = ? AND symbol = ?
+                ORDER BY timestamp_ms DESC, id DESC LIMIT ?
+                """,
+                (exchange, symbol, limit),
+            ).fetchall()
+        return [dict(row) for row in reversed(rows)]
+
     def _initialize(self) -> None:
         with closing(self._connect()) as connection, connection:
             connection.execute(
@@ -167,8 +208,28 @@ class HistoryRepository:
             connection.execute("CREATE TABLE IF NOT EXISTS alert_journal (id INTEGER PRIMARY KEY, timestamp_ms INTEGER NOT NULL, exchange TEXT NOT NULL, symbol TEXT NOT NULL, message TEXT NOT NULL)")
             connection.execute(
                 """
+                CREATE TABLE IF NOT EXISTS liquidations (
+                    id INTEGER PRIMARY KEY,
+                    exchange TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    timestamp_ms INTEGER NOT NULL,
+                    side TEXT NOT NULL,
+                    quantity REAL NOT NULL,
+                    price REAL NOT NULL,
+                    UNIQUE (exchange, symbol, timestamp_ms, side, quantity, price)
+                )
+                """
+            )
+            connection.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_history_exchange_symbol_time
                 ON history (exchange, symbol, timestamp_ms)
+                """
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_liquidations_exchange_symbol_time
+                ON liquidations (exchange, symbol, timestamp_ms)
                 """
             )
             columns = {
