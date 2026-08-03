@@ -1,0 +1,124 @@
+"""Public Binance USD-M Futures adapter."""
+
+from __future__ import annotations
+
+import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Iterable
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import urlopen
+
+from api.exchange_client import ExchangeClient
+
+
+class BinanceAPIError(RuntimeError):
+    """Raised when Binance Futures public market data cannot be loaded."""
+
+
+class BinanceClient(ExchangeClient):
+    """Normalize Binance USD-M perpetual public data for the scanner."""
+
+    BASE_URL = "https://fapi.binance.com"
+    REQUEST_TIMEOUT_SECONDS = 15
+    MAX_DETAILS_WORKERS = 8
+    exchange_name = "Binance"
+    WEBSOCKET_URL = "wss://fstream.binance.com/stream?streams="
+
+    @staticmethod
+    def ticker_stream_url(symbols: Iterable[str]) -> str:
+        return BinanceClient.WEBSOCKET_URL + "/".join(f"{symbol.lower()}@ticker" for symbol in symbols)
+
+    @staticmethod
+    def parse_ticker_message(message: dict[str, Any]) -> dict[str, Any] | None:
+        data = message.get("data", message)
+        if not isinstance(data, dict) or not data.get("s"): return None
+        return {"symbol": data["s"], "lastPrice": data.get("c"), "turnover24h": data.get("q"), "openInterest": None, "fundingRate": None, "price24hPcnt": (BinanceClient._percent_decimal(data.get("P")))}
+    TIMEFRAME_INTERVALS = {
+        "15m": "15m", "1H": "1h", "4H": "4h", "1D": "1d", "1W": "1w", "1M": "1M"
+    }
+
+    def fetch_usdt_perpetual_tickers(self) -> list[dict[str, Any]]:
+        instruments = self._get("/fapi/v1/exchangeInfo")
+        symbols = {
+            entry["symbol"]
+            for entry in instruments.get("symbols", [])
+            if isinstance(entry, dict)
+            and entry.get("contractType") == "PERPETUAL"
+            and entry.get("quoteAsset") == "USDT"
+            and entry.get("status") == "TRADING"
+        }
+        tickers = self._get("/fapi/v1/ticker/24hr")
+        if not isinstance(tickers, list):
+            raise BinanceAPIError("Binance returned an invalid ticker list.")
+        selected = [ticker for ticker in tickers if ticker.get("symbol") in symbols]
+        selected.sort(key=lambda ticker: self._float(ticker.get("quoteVolume")) or 0, reverse=True)
+        details = self._fetch_details([ticker["symbol"] for ticker in selected[:100]])
+        return [
+            {
+                "symbol": ticker["symbol"],
+                "lastPrice": ticker.get("lastPrice"),
+                "turnover24h": ticker.get("quoteVolume"),
+                "openInterest": details.get(ticker["symbol"], {}).get("openInterest"),
+                "price24hPcnt": self._percent_decimal(ticker.get("priceChangePercent")),
+                "fundingRate": details.get(ticker["symbol"], {}).get("fundingRate"),
+            }
+            for ticker in selected
+        ]
+
+    def fetch_previous_close_prices(self, symbols: Iterable[str], timeframe: str) -> dict[str, float]:
+        interval = self.TIMEFRAME_INTERVALS[timeframe]
+        result: dict[str, float] = {}
+        with ThreadPoolExecutor(max_workers=self.MAX_DETAILS_WORKERS) as executor:
+            futures = {executor.submit(self._previous_close, symbol, interval): symbol for symbol in dict.fromkeys(symbols)}
+            for future in as_completed(futures):
+                try:
+                    value = future.result()
+                except BinanceAPIError:
+                    continue
+                if value is not None:
+                    result[futures[future]] = value
+        return result
+
+    def _fetch_details(self, symbols: list[str]) -> dict[str, dict[str, Any]]:
+        details: dict[str, dict[str, Any]] = {}
+        with ThreadPoolExecutor(max_workers=self.MAX_DETAILS_WORKERS) as executor:
+            futures = {executor.submit(self._fetch_detail, symbol): symbol for symbol in symbols}
+            for future in as_completed(futures):
+                try:
+                    details[futures[future]] = future.result()
+                except BinanceAPIError:
+                    details[futures[future]] = {}
+        return details
+
+    def _fetch_detail(self, symbol: str) -> dict[str, Any]:
+        oi = self._get("/fapi/v1/openInterest", {"symbol": symbol})
+        funding = self._get("/fapi/v1/fundingRate", {"symbol": symbol, "limit": 1})
+        latest = funding[-1] if isinstance(funding, list) and funding else {}
+        return {"openInterest": oi.get("openInterest"), "fundingRate": latest.get("fundingRate")}
+
+    def _previous_close(self, symbol: str, interval: str) -> float | None:
+        candles = self._get("/fapi/v1/klines", {"symbol": symbol, "interval": interval, "limit": 2})
+        if not isinstance(candles, list) or len(candles) < 2:
+            return None
+        return self._float(candles[-2][4])
+
+    def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:
+        suffix = f"?{urlencode(params)}" if params else ""
+        try:
+            with urlopen(f"{self.BASE_URL}{path}{suffix}", timeout=self.REQUEST_TIMEOUT_SECONDS) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as error:
+            raise BinanceAPIError(f"Unable to load Binance market data: {error}") from error
+
+    @staticmethod
+    def _float(value: object) -> float | None:
+        try:
+            return float(str(value))
+        except (TypeError, ValueError):
+            return None
+
+    @classmethod
+    def _percent_decimal(cls, value: object) -> float | None:
+        number = cls._float(value)
+        return number / 100 if number is not None else None

@@ -4,6 +4,22 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from enum import Enum
+
+
+class SignalType(str, Enum):
+    """Market-position signals derived from OI, volume and price changes."""
+
+    NONE = ""
+    LONG_BUILDUP = "Long Buildup"
+    SHORT_BUILDUP = "Short Buildup"
+    LONG_UNWINDING = "Long Unwinding"
+    SHORT_COVERING = "Short Covering"
+    NEUTRAL = "Neutral"
+
+    # Compatibility aliases retained for code written before v0.6.
+    LONG_EXIT = LONG_UNWINDING
+    SHORT_EXIT = SHORT_COVERING
 
 
 @dataclass(frozen=True, slots=True)
@@ -16,7 +32,12 @@ class ScannerItem:
     price: float | None
     volume_24h: float | None
     open_interest: float | None
+    oi_change_pct: float | None
+    volume_change_pct: float | None
     price_change_pct_24h: float | None
     price_change_pct: float | None
     funding_rate: float | None
     updated_at: datetime
+    funding_change: float | None = None
+    signal: SignalType = SignalType.NONE
+    score: int = 0

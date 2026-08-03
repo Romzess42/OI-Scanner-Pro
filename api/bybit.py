@@ -9,17 +9,32 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import urlopen
 
+from api.exchange_client import ExchangeClient
+
 
 class BybitAPIError(RuntimeError):
     """Raised when Bybit cannot provide valid market data."""
 
 
-class BybitClient:
+class BybitClient(ExchangeClient):
     """Fetch publicly available market data for USDT perpetual contracts."""
 
     BASE_URL = "https://api.bybit.com"
     REQUEST_TIMEOUT_SECONDS = 15
     MAX_KLINE_WORKERS = 8
+    exchange_name = "Bybit"
+    WEBSOCKET_URL = "wss://stream.bybit.com/v5/public/linear"
+
+    @staticmethod
+    def ticker_subscription(symbols: Iterable[str]) -> dict[str, object]:
+        return {"op": "subscribe", "args": [f"tickers.{symbol}" for symbol in symbols]}
+
+    @staticmethod
+    def parse_ticker_message(message: Mapping[str, Any]) -> dict[str, Any] | None:
+        data = message.get("data")
+        if not isinstance(data, dict) or not data.get("symbol"):
+            return None
+        return {"symbol": data["symbol"], "lastPrice": data.get("lastPrice"), "turnover24h": data.get("turnover24h"), "openInterest": data.get("openInterest"), "fundingRate": data.get("fundingRate"), "price24hPcnt": data.get("price24hPcnt")}
 
     TIMEFRAME_INTERVALS = {
         "15m": "15",

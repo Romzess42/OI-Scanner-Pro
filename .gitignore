@@ -1,0 +1,8 @@
+# Python artifacts
+__pycache__/
+*.py[cod]
+
+# Local scanner history
+oi_scanner.db
+oi_scanner.db-shm
+oi_scanner.db-wal
