@@ -1,6 +1,7 @@
 """Detailed local-history view opened from the scanner table."""
 from __future__ import annotations
 from PySide6.QtWidgets import QDialog, QLabel, QTabWidget, QVBoxLayout, QWidget
+from datetime import datetime, timezone
 from charts.chart_widget import HistoryChart
 from charts.funding_chart import FundingChart
 from charts.oi_chart import OIChart
@@ -18,5 +19,6 @@ class InstrumentAnalysisDialog(QDialog):
         charts = (("Price", HistoryChart("Price", "#FFD54F"), "price"), ("Open Interest", OIChart(), "open_interest"), ("Volume", VolumeChart(), "volume_24h"), ("Funding", FundingChart(), "funding_rate"), ("Score", HistoryChart("Score", "#EF5350"), "score"))
         for name, chart, field in charts:
             page = QWidget(); page_layout = QVBoxLayout(page); chart.set_series(rows, field); page_layout.addWidget(chart); tabs.addTab(page, name)
-        for name, value in (("Liquidations", "No public liquidation history loaded for this market."), ("Signal History", "\n".join(str(row.get("signal") or "Neutral") for row in rows) or "Collecting history...")):
+        signals = "\n".join(f"{datetime.fromtimestamp(row['timestamp_ms'] / 1_000, timezone.utc).strftime('%Y-%m-%d %H:%M')}  {row.get('signal') or 'Neutral'}  Score {row.get('score', 0)}" for row in rows) or "Collecting history..."
+        for name, value in (("Liquidations", "No public liquidation history loaded for this market."), ("Signal History", signals)):
             page = QWidget(); page_layout = QVBoxLayout(page); page_layout.addWidget(QLabel(value)); tabs.addTab(page, name)

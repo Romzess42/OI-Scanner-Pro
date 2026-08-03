@@ -7,7 +7,7 @@ import pyqtgraph as pg
 
 class HistoryChart(pg.PlotWidget):
     def __init__(self, title: str, color: str):
-        super().__init__(title=title)
+        super().__init__(title=title, axisItems={"bottom": pg.DateAxisItem(orientation="bottom")})
         self.showGrid(x=True, y=True, alpha=0.2)
         self._curve = self.plot(pen=pg.mkPen(color, width=2))
 

@@ -72,6 +72,19 @@ class HistoryRepositoryTests(TestCase):
 
             self.assertIn("funding_rate", columns)
 
+    def test_persists_alert_journal_entries(self):
+        with TemporaryDirectory() as directory:
+            database_path = f"{directory}/history.db"
+            repository = HistoryRepository(database_path)
+            now = datetime(2026, 8, 3, tzinfo=timezone.utc)
+
+            repository.save_alert("Bybit", "BTCUSDT", "Long Buildup", now)
+
+            persisted = HistoryRepository(database_path).get_alerts()
+            self.assertEqual(persisted[0]["exchange"], "Bybit")
+            self.assertEqual(persisted[0]["symbol"], "BTCUSDT")
+            self.assertEqual(persisted[0]["message"], "Long Buildup")
+
     @staticmethod
     def _item(
         updated_at: datetime,

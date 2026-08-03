@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QFileDialog,
     QMessageBox,
+    QApplication,
 )
 
 from scanner.filters import ScannerFilters, SignalThresholds, apply_filters
@@ -82,6 +83,7 @@ class MainWindow(QMainWindow):
         self.alert_manager = LocalAlertManager()
         self.thresholds = self._load_thresholds()
         self._alerts_enabled = True
+        self._alert_sound_enabled = self._load_alert_sound_enabled()
         self._refresh_worker: ScannerWorker | None = None
         self.realtime = WebSocketService()
         self.watchlist = WatchlistService(DATABASE_NAME)
@@ -143,8 +145,7 @@ class MainWindow(QMainWindow):
 
     def create_menu(self) -> None:
         menu = self.menuBar()
-        menu.addMenu("File")
-        file_menu = menu.actions()[-1].menu()
+        file_menu = menu.addMenu("File")
         file_menu.addAction("Export CSV").triggered.connect(lambda: self._export("csv"))
         file_menu.addAction("Export Excel").triggered.connect(lambda: self._export("xlsx"))
         file_menu.addAction("Export JSON").triggered.connect(lambda: self._export("json"))
@@ -155,6 +156,10 @@ class MainWindow(QMainWindow):
         self.alerts_action.setCheckable(True)
         self.alerts_action.setChecked(True)
         self.alerts_action.toggled.connect(self._set_alerts_enabled)
+        self.alert_sound_action = alerts_menu.addAction("Play sound for alerts")
+        self.alert_sound_action.setCheckable(True)
+        self.alert_sound_action.setChecked(self._alert_sound_enabled)
+        self.alert_sound_action.toggled.connect(self._set_alert_sound_enabled)
 
         settings_menu = menu.addMenu("Settings")
         settings_action = settings_menu.addAction("Signal thresholds...")
@@ -245,6 +250,8 @@ class MainWindow(QMainWindow):
             self.alert_service.record(alert.symbol, "Scanner", alert.message)
         if alerts:
             self.alert_journal.reload()
+            if self._alert_sound_enabled:
+                QApplication.beep()
             settings = QSettings("OI Scanner Pro", "OI Scanner Pro")
             TelegramNotifier(str(settings.value("telegram/token", "")), str(settings.value("telegram/chat_id", ""))).send(alert.message)
         if self._tray_icon.isVisible():
@@ -360,6 +367,14 @@ class MainWindow(QMainWindow):
 
     def _set_alerts_enabled(self, enabled: bool) -> None:
         self._alerts_enabled = enabled
+
+    def _set_alert_sound_enabled(self, enabled: bool) -> None:
+        self._alert_sound_enabled = enabled
+        QSettings("OI Scanner Pro", "OI Scanner Pro").setValue("alerts/sound", enabled)
+
+    @staticmethod
+    def _load_alert_sound_enabled() -> bool:
+        return str(QSettings("OI Scanner Pro", "OI Scanner Pro").value("alerts/sound", "true")).lower() != "false"
 
     def _load_thresholds(self) -> SignalThresholds:
         settings = QSettings("OI Scanner Pro", "OI Scanner Pro")
