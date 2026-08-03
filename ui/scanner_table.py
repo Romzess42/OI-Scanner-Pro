@@ -12,6 +12,7 @@ from scanner.models import ScannerItem, SignalType
 
 
 DASH = "\u2014"
+PRICE_COLUMN = 13
 
 
 class SortableTableWidgetItem(QTableWidgetItem):
@@ -157,19 +158,27 @@ class ScannerTable(QTableWidget):
             if item.exchange == changed.exchange and item.symbol == changed.symbol:
                 self._items[index] = changed
                 for row in range(self.rowCount()):
-                    if (
-                        self.item(row, 0).text() == changed.symbol
-                        and self.item(row, 1).text() == changed.exchange
-                    ):
+                    symbol_cell = self.item(row, 0)
+                    exchange_cell = self.item(row, 1)
+                    if symbol_cell is None or exchange_cell is None:
+                        continue
+                    if symbol_cell.text() == changed.symbol and exchange_cell.text() == changed.exchange:
                         self._replace_live_cell(row, 3, self._format_compact_number(changed.volume_24h), changed.volume_24h)
                         self._replace_live_cell(row, 4, self._format_compact_number(changed.open_interest), changed.open_interest)
                         self._replace_live_cell(row, 7, self._format_percent(changed.funding_rate, 3), changed.funding_rate)
-                        self._replace_live_cell(row, 14, self._format_price(changed.price), changed.price)
+                        self._replace_live_cell(row, PRICE_COLUMN, self._format_price(changed.price), changed.price)
                         break
                 return
 
     def _replace_live_cell(self, row: int, column: int, text: str, value: float | None) -> None:
         cell = self.item(row, column)
+        if cell is None:
+            cell = SortableTableWidgetItem(text, self._sort_value(value))
+            cell.setTextAlignment(
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+            )
+            self.setItem(row, column, cell)
+            return
         cell.setText(text)
         if isinstance(cell, SortableTableWidgetItem):
             cell._sort_value = self._sort_value(value)
