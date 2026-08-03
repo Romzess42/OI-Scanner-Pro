@@ -17,11 +17,12 @@ class ExchangeManager:
         active_clients = clients or (BybitClient(), BinanceClient(), OKXClient())
         self._clients = {client.exchange_name: client for client in active_clients}
 
-    def get_clients(self, exchange: str | None = None) -> list[ExchangeClient]:
-        if exchange is None:
+    def get_clients(self, exchanges: str | Iterable[str] | None = None) -> list[ExchangeClient]:
+        if exchanges is None:
             return list(self._clients.values())
-        client = self._clients.get(exchange)
-        return [client] if client is not None else []
+        if isinstance(exchanges, str):
+            exchanges = (exchanges,)
+        return [self._clients[name] for name in exchanges if name in self._clients]
 
     @property
     def exchanges(self) -> tuple[str, ...]:

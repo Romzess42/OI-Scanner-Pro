@@ -48,7 +48,7 @@ class FakeHistoryRepository:
         self.requested_symbols = []
         self.requested_before = None
 
-    def get_baselines(self, exchange, symbols, before):
+    def get_baselines(self, exchange, symbols, before, instrument_type="USDT Perpetual"):
         self.requested_exchange = exchange
         self.requested_symbols = symbols
         self.requested_before = before

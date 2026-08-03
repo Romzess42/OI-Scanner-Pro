@@ -104,11 +104,11 @@ class ScannerTable(QTableWidget):
                     self._sort_value(item.volume_24h),
                 ),
                 (
-                    self._format_compact_number(item.open_interest),
+                    DASH if item.instrument_type == "USDT Spot" else self._format_compact_number(item.open_interest),
                     self._sort_value(item.open_interest),
                 ),
                 (
-                    self._format_history_percent(item.oi_change_pct),
+                    DASH if item.instrument_type == "USDT Spot" else self._format_history_percent(item.oi_change_pct),
                     self._sort_value(item.oi_change_pct),
                 ),
                 (
@@ -116,7 +116,7 @@ class ScannerTable(QTableWidget):
                     self._sort_value(item.volume_change_pct),
                 ),
                 (
-                    self._format_percent(item.funding_rate, decimals=3),
+                    DASH if item.instrument_type == "USDT Spot" else self._format_percent(item.funding_rate, decimals=3),
                     self._sort_value(item.funding_rate),
                 ),
                 (DASH, float("-inf")),

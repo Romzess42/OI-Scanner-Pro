@@ -68,8 +68,11 @@ class InstrumentAnalysisDialog(QDialog):
         tabs = QTabWidget()
         layout.addWidget(tabs)
         repository = HistoryRepository(DATABASE_NAME)
-        rows = repository.get_series(item.exchange, item.symbol)
-        liquidation_events = repository.get_liquidations(item.exchange, item.symbol)
+        rows = repository.get_series(item.exchange, item.symbol, item.instrument_type)
+        liquidation_events = (
+            [] if item.instrument_type == "USDT Spot"
+            else repository.get_liquidations(item.exchange, item.symbol)
+        )
 
         self._price_chart = CandlestickChart()
         self._candle_status = QLabel("Preparing live candle request...")

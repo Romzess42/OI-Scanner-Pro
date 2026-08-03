@@ -7,6 +7,18 @@ from datetime import datetime
 from enum import Enum
 
 
+class InstrumentType(str, Enum):
+    """Market categories supported by the scanner."""
+
+    PERPETUAL = "Perpetual"
+    FUTURES = "Futures"
+    SPOT = "Spot"
+
+    @property
+    def display_name(self) -> str:
+        return f"USDT {self.value}"
+
+
 class SignalType(str, Enum):
     """Market-position signals derived from OI, volume and price changes."""
 

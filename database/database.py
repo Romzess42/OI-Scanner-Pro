@@ -37,6 +37,7 @@ class HistoryRepository:
             (
                 item.exchange,
                 item.symbol,
+                item.instrument_type,
                 int(item.updated_at.timestamp() * 1_000),
                 item.open_interest,
                 item.volume_24h,
@@ -54,10 +55,10 @@ class HistoryRepository:
             connection.executemany(
                 """
                 INSERT INTO history (
-                    exchange, symbol, timestamp_ms, open_interest, volume_24h, price,
+                    exchange, symbol, instrument_type, timestamp_ms, open_interest, volume_24h, price,
                     funding_rate, score, signal
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 rows,
             )
@@ -67,6 +68,7 @@ class HistoryRepository:
         exchange: str,
         symbols: Iterable[str],
         before: datetime,
+        instrument_type: str = "USDT Perpetual",
     ) -> dict[str, HistorySnapshot]:
         """Return the latest snapshot at or before *before* for every symbol."""
         unique_symbols = list(dict.fromkeys(symbols))
@@ -89,15 +91,16 @@ class HistoryRepository:
                     SELECT symbol, MAX(timestamp_ms) AS timestamp_ms
                     FROM history
                     WHERE exchange = ?
+                      AND instrument_type = ?
                       AND timestamp_ms <= ?
                       AND symbol IN ({placeholders})
                     GROUP BY symbol
                 ) AS selected
                 ON latest.symbol = selected.symbol
                    AND latest.timestamp_ms = selected.timestamp_ms
-                WHERE latest.exchange = ?
+                WHERE latest.exchange = ? AND latest.instrument_type = ?
             """
-            parameters = [exchange, cutoff_ms, *symbol_group, exchange]
+            parameters = [exchange, instrument_type, cutoff_ms, *symbol_group, exchange, instrument_type]
 
             with closing(self._connect()) as connection:
                 rows = connection.execute(query, parameters).fetchall()
@@ -123,17 +126,19 @@ class HistoryRepository:
             row = connection.execute("SELECT COUNT(*) AS count FROM history").fetchone()
         return int(row["count"])
 
-    def get_series(self, exchange: str, symbol: str, limit: int = 500) -> list[dict[str, object]]:
+    def get_series(
+        self, exchange: str, symbol: str, instrument_type: str = "USDT Perpetual", limit: int = 500
+    ) -> list[dict[str, object]]:
         """Return chronological local snapshots for Instrument Analysis charts."""
         with closing(self._connect()) as connection:
             rows = connection.execute(
                 """
                 SELECT timestamp_ms, price, open_interest, volume_24h, funding_rate,
                        score, signal
-                FROM history WHERE exchange = ? AND symbol = ?
+                FROM history WHERE exchange = ? AND symbol = ? AND instrument_type = ?
                 ORDER BY timestamp_ms DESC LIMIT ?
                 """,
-                (exchange, symbol, limit),
+                (exchange, symbol, instrument_type, limit),
             ).fetchall()
         return [dict(row) for row in reversed(rows)]
 
@@ -195,6 +200,7 @@ class HistoryRepository:
                     id INTEGER PRIMARY KEY,
                     exchange TEXT NOT NULL,
                     symbol TEXT NOT NULL,
+                    instrument_type TEXT NOT NULL DEFAULT 'USDT Perpetual',
                     timestamp_ms INTEGER NOT NULL,
                     open_interest REAL,
                     volume_24h REAL,
@@ -246,6 +252,16 @@ class HistoryRepository:
                 connection.execute(
                     "ALTER TABLE history ADD COLUMN signal TEXT NOT NULL DEFAULT ''"
                 )
+            if "instrument_type" not in columns:
+                connection.execute(
+                    "ALTER TABLE history ADD COLUMN instrument_type TEXT NOT NULL DEFAULT 'USDT Perpetual'"
+                )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_history_exchange_type_symbol_time
+                ON history (exchange, instrument_type, symbol, timestamp_ms)
+                """
+            )
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self._database_path)

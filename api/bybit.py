@@ -113,6 +113,21 @@ class BybitClient(ExchangeClient):
             if isinstance(ticker, dict) and ticker.get("symbol") in symbols
         ]
 
+    def fetch_market_tickers(self, instrument_types: Iterable[str]) -> list[dict[str, Any]]:
+        """Return real Bybit USDT Spot, perpetual and dated futures records."""
+        requested = set(instrument_types)
+        records: list[dict[str, Any]] = []
+        if "Perpetual" in requested:
+            records.extend(
+                {**ticker, "instrumentType": "Perpetual"}
+                for ticker in self.fetch_usdt_perpetual_tickers()
+            )
+        if "Spot" in requested:
+            records.extend(self._fetch_tickers_for_type("spot", "Spot"))
+        if "Futures" in requested:
+            records.extend(self._fetch_tickers_for_type("linear", "Futures"))
+        return records
+
     def fetch_previous_close_prices(
         self,
         symbols: Iterable[str],
@@ -134,7 +149,7 @@ class BybitClient(ExchangeClient):
 
         with ThreadPoolExecutor(max_workers=self.MAX_KLINE_WORKERS) as executor:
             futures = {
-                executor.submit(self._fetch_previous_close, symbol, interval): symbol
+                executor.submit(self._fetch_previous_close, symbol, interval, "linear"): symbol
                 for symbol in unique_symbols
             }
             for future in as_completed(futures):
@@ -148,6 +163,29 @@ class BybitClient(ExchangeClient):
                     close_prices[symbol] = close_price
 
         return close_prices
+
+    def fetch_previous_close_prices_for_type(
+        self, symbols: Iterable[str], timeframe: str, instrument_type: str
+    ) -> dict[str, float]:
+        try:
+            interval = self.TIMEFRAME_INTERVALS[timeframe]
+        except KeyError as error:
+            raise ValueError(f"Unsupported Bybit timeframe: {timeframe}") from error
+        category = "spot" if instrument_type == "Spot" else "linear"
+        result: dict[str, float] = {}
+        with ThreadPoolExecutor(max_workers=self.MAX_KLINE_WORKERS) as executor:
+            futures = {
+                executor.submit(self._fetch_previous_close, symbol, interval, category): symbol
+                for symbol in dict.fromkeys(symbols)
+            }
+            for future in as_completed(futures):
+                try:
+                    price = future.result()
+                except BybitAPIError:
+                    continue
+                if price is not None:
+                    result[futures[future]] = price
+        return result
 
     def fetch_ohlc(
         self,
@@ -208,6 +246,55 @@ class BybitClient(ExchangeClient):
 
         return symbols
 
+    def _fetch_tickers_for_type(self, category: str, instrument_type: str) -> list[dict[str, Any]]:
+        instruments = self._fetch_instruments(category)
+        if instrument_type == "Spot":
+            symbols = {
+                instrument["symbol"]
+                for instrument in instruments
+                if isinstance(instrument, dict)
+                and instrument.get("quoteCoin") == "USDT"
+                and instrument.get("status") == "Trading"
+                and isinstance(instrument.get("symbol"), str)
+            }
+        else:
+            symbols = {
+                instrument["symbol"]
+                for instrument in instruments
+                if isinstance(instrument, dict)
+                and instrument.get("contractType") == "LinearFutures"
+                and instrument.get("settleCoin") == "USDT"
+                and instrument.get("status") == "Trading"
+                and isinstance(instrument.get("symbol"), str)
+            }
+        response = self._get("/v5/market/tickers", {"category": category})
+        tickers = response.get("result", {}).get("list", [])
+        if not isinstance(tickers, list):
+            raise BybitAPIError("Bybit returned an invalid ticker list.")
+        return [
+            {**ticker, "instrumentType": instrument_type}
+            for ticker in tickers
+            if isinstance(ticker, dict) and ticker.get("symbol") in symbols
+        ]
+
+    def _fetch_instruments(self, category: str) -> list[dict[str, Any]]:
+        instruments: list[dict[str, Any]] = []
+        cursor: str | None = None
+        while True:
+            params: dict[str, str | int] = {"category": category, "limit": 1_000}
+            if cursor:
+                params["cursor"] = cursor
+            response = self._get("/v5/market/instruments-info", params)
+            result = response.get("result", {})
+            page = result.get("list", [])
+            if not isinstance(page, list):
+                raise BybitAPIError("Bybit returned an invalid instruments list.")
+            instruments.extend(item for item in page if isinstance(item, dict))
+            next_cursor = result.get("nextPageCursor")
+            if category == "spot" or not isinstance(next_cursor, str) or not next_cursor:
+                return instruments
+            cursor = next_cursor
+
     @staticmethod
     def is_usdt_perpetual(instrument: Mapping[str, Any]) -> bool:
         """Return whether a Bybit instrument is a tradable USDT perpetual."""
@@ -217,11 +304,11 @@ class BybitClient(ExchangeClient):
             and instrument.get("status") == "Trading"
         )
 
-    def _fetch_previous_close(self, symbol: str, interval: str) -> float | None:
+    def _fetch_previous_close(self, symbol: str, interval: str, category: str = "linear") -> float | None:
         response = self._get(
             "/v5/market/kline",
             {
-                "category": "linear",
+                "category": category,
                 "symbol": symbol,
                 "interval": interval,
                 "limit": 2,

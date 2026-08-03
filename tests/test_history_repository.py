@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import closing
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from tempfile import TemporaryDirectory
 from unittest import TestCase
@@ -71,6 +72,7 @@ class HistoryRepositoryTests(TestCase):
                 }
 
             self.assertIn("funding_rate", columns)
+            self.assertIn("instrument_type", columns)
 
     def test_persists_alert_journal_entries(self):
         with TemporaryDirectory() as directory:
@@ -99,6 +101,18 @@ class HistoryRepositoryTests(TestCase):
             self.assertEqual(len(events), 1)
             self.assertEqual(events[0]["side"], "Buy")
             self.assertEqual(events[0]["quantity"], 2.0)
+
+    def test_keeps_spot_and_perpetual_history_separate(self):
+        with TemporaryDirectory() as directory:
+            repository = HistoryRepository(f"{directory}/history.db")
+            now = datetime(2026, 8, 3, tzinfo=timezone.utc)
+            perpetual = self._item(now, open_interest=100.0, volume=1_000.0)
+            spot = replace(perpetual, instrument_type="USDT Spot", open_interest=None)
+
+            repository.save_snapshots([perpetual, spot])
+
+            self.assertEqual(len(repository.get_series("Bybit", "BTCUSDT", "USDT Perpetual")), 1)
+            self.assertEqual(len(repository.get_series("Bybit", "BTCUSDT", "USDT Spot")), 1)
 
     @staticmethod
     def _item(

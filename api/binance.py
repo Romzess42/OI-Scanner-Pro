@@ -21,6 +21,7 @@ class BinanceClient(ExchangeClient):
     """Normalize Binance USD-M perpetual public data for the scanner."""
 
     BASE_URL = "https://fapi.binance.com"
+    SPOT_BASE_URL = "https://api.binance.com"
     REQUEST_TIMEOUT_SECONDS = 15
     MAX_DETAILS_WORKERS = 8
     exchange_name = "Binance"
@@ -132,11 +133,46 @@ class BinanceClient(ExchangeClient):
             for ticker in selected
         ]
 
+    def fetch_market_tickers(self, instrument_types: Iterable[str]) -> list[dict[str, Any]]:
+        """Return Binance USDT Spot, perpetual and delivery-futures tickers."""
+        requested = set(instrument_types)
+        records: list[dict[str, Any]] = []
+        if "Perpetual" in requested:
+            records.extend(
+                {**ticker, "instrumentType": "Perpetual"}
+                for ticker in self.fetch_usdt_perpetual_tickers()
+            )
+        if "Spot" in requested:
+            records.extend(self._fetch_spot_tickers())
+        if "Futures" in requested:
+            records.extend(self._fetch_delivery_futures_tickers())
+        return records
+
     def fetch_previous_close_prices(self, symbols: Iterable[str], timeframe: str) -> dict[str, float]:
         interval = self.TIMEFRAME_INTERVALS[timeframe]
         result: dict[str, float] = {}
         with ThreadPoolExecutor(max_workers=self.MAX_DETAILS_WORKERS) as executor:
             futures = {executor.submit(self._previous_close, symbol, interval): symbol for symbol in dict.fromkeys(symbols)}
+            for future in as_completed(futures):
+                try:
+                    value = future.result()
+                except BinanceAPIError:
+                    continue
+                if value is not None:
+                    result[futures[future]] = value
+        return result
+
+    def fetch_previous_close_prices_for_type(
+        self, symbols: Iterable[str], timeframe: str, instrument_type: str
+    ) -> dict[str, float]:
+        interval = self.TIMEFRAME_INTERVALS[timeframe]
+        loader = self._spot_previous_close if instrument_type == "Spot" else self._previous_close
+        result: dict[str, float] = {}
+        with ThreadPoolExecutor(max_workers=self.MAX_DETAILS_WORKERS) as executor:
+            futures = {
+                executor.submit(loader, symbol, interval): symbol
+                for symbol in dict.fromkeys(symbols)
+            }
             for future in as_completed(futures):
                 try:
                     value = future.result()
@@ -190,8 +226,14 @@ class BinanceClient(ExchangeClient):
         return details
 
     def _fetch_detail(self, symbol: str) -> dict[str, Any]:
-        oi = self._get("/fapi/v1/openInterest", {"symbol": symbol})
-        funding = self._get("/fapi/v1/fundingRate", {"symbol": symbol, "limit": 1})
+        try:
+            oi = self._get("/fapi/v1/openInterest", {"symbol": symbol})
+        except BinanceAPIError:
+            oi = {}
+        try:
+            funding = self._get("/fapi/v1/fundingRate", {"symbol": symbol, "limit": 1})
+        except BinanceAPIError:
+            funding = []
         latest = funding[-1] if isinstance(funding, list) and funding else {}
         return {"openInterest": oi.get("openInterest"), "fundingRate": latest.get("fundingRate")}
 
@@ -201,6 +243,57 @@ class BinanceClient(ExchangeClient):
             return None
         return self._float(candles[-2][4])
 
+    def _spot_previous_close(self, symbol: str, interval: str) -> float | None:
+        candles = self._spot_get("/api/v3/klines", {"symbol": symbol, "interval": interval, "limit": 2})
+        if not isinstance(candles, list) or len(candles) < 2:
+            return None
+        return self._float(candles[-2][4])
+
+    def _fetch_spot_tickers(self) -> list[dict[str, Any]]:
+        instruments = self._spot_get("/api/v3/exchangeInfo")
+        symbols = {
+            item["symbol"]
+            for item in instruments.get("symbols", [])
+            if isinstance(item, dict)
+            and item.get("status") == "TRADING"
+            and item.get("quoteAsset") == "USDT"
+        }
+        tickers = self._spot_get("/api/v3/ticker/24hr")
+        return [
+            {
+                "symbol": ticker["symbol"], "lastPrice": ticker.get("lastPrice"),
+                "turnover24h": ticker.get("quoteVolume"), "openInterest": None,
+                "price24hPcnt": self._percent_decimal(ticker.get("priceChangePercent")),
+                "fundingRate": None, "instrumentType": "Spot",
+            }
+            for ticker in tickers
+            if isinstance(ticker, dict) and ticker.get("symbol") in symbols
+        ]
+
+    def _fetch_delivery_futures_tickers(self) -> list[dict[str, Any]]:
+        instruments = self._get("/fapi/v1/exchangeInfo")
+        symbols = {
+            item["symbol"]
+            for item in instruments.get("symbols", [])
+            if isinstance(item, dict)
+            and item.get("contractType") in {"CURRENT_QUARTER", "NEXT_QUARTER"}
+            and item.get("quoteAsset") == "USDT"
+            and item.get("status") == "TRADING"
+        }
+        tickers = self._get("/fapi/v1/ticker/24hr")
+        selected = [ticker for ticker in tickers if ticker.get("symbol") in symbols]
+        details = self._fetch_details([ticker["symbol"] for ticker in selected[:100]])
+        return [
+            {
+                "symbol": ticker["symbol"], "lastPrice": ticker.get("lastPrice"),
+                "turnover24h": ticker.get("quoteVolume"),
+                "openInterest": details.get(ticker["symbol"], {}).get("openInterest"),
+                "price24hPcnt": self._percent_decimal(ticker.get("priceChangePercent")),
+                "fundingRate": None, "instrumentType": "Futures",
+            }
+            for ticker in selected
+        ]
+
     def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:
         suffix = f"?{urlencode(params)}" if params else ""
         try:
@@ -208,6 +301,14 @@ class BinanceClient(ExchangeClient):
                 return json.loads(response.read().decode("utf-8"))
         except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as error:
             raise BinanceAPIError(f"Unable to load Binance market data: {error}") from error
+
+    def _spot_get(self, path: str, params: dict[str, Any] | None = None) -> Any:
+        suffix = f"?{urlencode(params)}" if params else ""
+        try:
+            with urlopen(f"{self.SPOT_BASE_URL}{path}{suffix}", timeout=self.REQUEST_TIMEOUT_SECONDS) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as error:
+            raise BinanceAPIError(f"Unable to load Binance Spot market data: {error}") from error
 
     @staticmethod
     def _float(value: object) -> float | None:

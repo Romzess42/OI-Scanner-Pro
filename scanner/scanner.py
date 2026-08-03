@@ -17,7 +17,7 @@ from scanner.filters import (
     calculate_score,
     determine_signal,
 )
-from scanner.models import ScannerItem
+from scanner.models import InstrumentType, ScannerItem
 
 
 class BybitDataProvider(Protocol):
@@ -125,9 +125,15 @@ class ScannerService:
             for client in clients
         }
         items: list[ScannerItem] = []
+        requested_types = self._requested_instrument_types(filters)
         for exchange, client in clients_by_exchange.items():
             try:
-                tickers = client.fetch_usdt_perpetual_tickers()
+                if hasattr(client, "fetch_market_tickers"):
+                    tickers = client.fetch_market_tickers(
+                        [instrument_type.value for instrument_type in requested_types]
+                    )
+                else:
+                    tickers = client.fetch_usdt_perpetual_tickers()
             except RuntimeError:
                 continue
             items.extend(
@@ -140,33 +146,46 @@ class ScannerService:
             key=lambda item: item.volume_24h or 0.0,
             reverse=True,
         )
-        baselines: dict[tuple[str, str], HistorySnapshot] = {}
-        previous_closes: dict[tuple[str, str], float] = {}
+        baselines: dict[tuple[str, str, str], HistorySnapshot] = {}
+        previous_closes: dict[tuple[str, str, str], float] = {}
         for exchange, client in clients_by_exchange.items():
             exchange_items = [item for item in sorted_items if item.exchange == exchange]
-            exchange_baselines = self._history_repository.get_baselines(
-                exchange,
-                [item.symbol for item in exchange_items],
-                updated_at - self._get_timeframe_delta(timeframe),
-            )
-            baselines.update(
-                {(exchange, symbol): snapshot for symbol, snapshot in exchange_baselines.items()}
-            )
-            try:
-                prices = client.fetch_previous_close_prices(
-                    [item.symbol for item in exchange_items[: self.PRICE_CHANGE_SYMBOL_LIMIT]],
-                    timeframe,
+            for instrument_type in requested_types:
+                type_items = [
+                    item for item in exchange_items
+                    if self._item_market_type(item) is instrument_type
+                ]
+                exchange_baselines = self._history_repository.get_baselines(
+                    exchange,
+                    [item.symbol for item in type_items],
+                    updated_at - self._get_timeframe_delta(timeframe),
+                    instrument_type.display_name,
                 )
-            except RuntimeError:
-                prices = {}
-            previous_closes.update(
-                {(exchange, symbol): price for symbol, price in prices.items()}
-            )
+                baselines.update(
+                    {(exchange, instrument_type.display_name, symbol): snapshot for symbol, snapshot in exchange_baselines.items()}
+                )
+                try:
+                    if hasattr(client, "fetch_previous_close_prices_for_type"):
+                        prices = client.fetch_previous_close_prices_for_type(
+                            [item.symbol for item in type_items[: self.PRICE_CHANGE_SYMBOL_LIMIT]],
+                            timeframe,
+                            instrument_type.value,
+                        )
+                    else:
+                        prices = client.fetch_previous_close_prices(
+                            [item.symbol for item in type_items[: self.PRICE_CHANGE_SYMBOL_LIMIT]],
+                            timeframe,
+                        )
+                except RuntimeError:
+                    prices = {}
+                previous_closes.update(
+                    {(exchange, instrument_type.display_name, symbol): price for symbol, price in prices.items()}
+                )
 
         enriched_items: list[ScannerItem] = []
         for item in sorted_items:
-            baseline = baselines.get((item.exchange, item.symbol))
-            previous_price = previous_closes.get((item.exchange, item.symbol))
+            baseline = baselines.get((item.exchange, item.instrument_type, item.symbol))
+            previous_price = previous_closes.get((item.exchange, item.instrument_type, item.symbol))
             if previous_price is None and baseline is not None:
                 previous_price = baseline.price
 
@@ -211,20 +230,26 @@ class ScannerService:
     def _build_item(
         ticker: dict[str, Any], updated_at: datetime, exchange: str = "Bybit"
     ) -> ScannerItem:
+        raw_type = str(ticker.get("instrumentType", InstrumentType.PERPETUAL.value))
+        try:
+            instrument_type = InstrumentType(raw_type)
+        except ValueError:
+            instrument_type = InstrumentType.PERPETUAL
+        is_spot = instrument_type is InstrumentType.SPOT
         return ScannerItem(
             symbol=str(ticker["symbol"]),
             exchange=exchange,
-            instrument_type="USDT Perpetual",
+            instrument_type=str(ticker.get("instrumentLabel", instrument_type.display_name)),
             price=ScannerService._as_float(ticker.get("lastPrice")),
             volume_24h=ScannerService._as_float(ticker.get("turnover24h")),
-            open_interest=ScannerService._as_float(ticker.get("openInterest")),
+            open_interest=None if is_spot else ScannerService._as_float(ticker.get("openInterest")),
             oi_change_pct=None,
             volume_change_pct=None,
             price_change_pct_24h=ScannerService._as_float(
                 ticker.get("price24hPcnt")
             ),
             price_change_pct=None,
-            funding_rate=ScannerService._as_float(ticker.get("fundingRate")),
+            funding_rate=None if is_spot else ScannerService._as_float(ticker.get("fundingRate")),
             updated_at=updated_at,
         )
 
@@ -276,9 +301,27 @@ class ScannerService:
         """Select active exchange adapters while preserving the v0.5 injection API."""
         if self._exchange_manager is not None:
             return self._exchange_manager.get_clients(
-                filters.exchange if filters is not None else None
+                self._selected_exchanges(filters)
             )
         return [self._bybit_client] if self._bybit_client is not None else [BybitClient()]
+
+    @staticmethod
+    def _requested_instrument_types(filters: ScannerFilters | None) -> frozenset[InstrumentType]:
+        if filters is not None and filters.instrument_types is not None:
+            return filters.instrument_types
+        return frozenset((InstrumentType.PERPETUAL,))
+
+    @staticmethod
+    def _selected_exchanges(filters: ScannerFilters | None) -> frozenset[str] | None:
+        if filters is None:
+            return None
+        if filters.exchanges is not None:
+            return filters.exchanges
+        return frozenset((filters.exchange,)) if filters.exchange is not None else None
+
+    @staticmethod
+    def _item_market_type(item: ScannerItem) -> InstrumentType:
+        return InstrumentType(item.instrument_type.removeprefix("USDT "))
 
     def apply_live_update(self, exchange: str, update: dict[str, Any]) -> ScannerItem | None:
         """Merge one normalized ticker update without another REST refresh."""

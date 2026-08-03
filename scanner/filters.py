@@ -10,7 +10,7 @@ from config import (
     DEFAULT_ALERT_SCORE_THRESHOLD,
     DEFAULT_ALERT_VOLUME_THRESHOLD,
 )
-from scanner.models import ScannerItem, SignalType
+from scanner.models import InstrumentType, ScannerItem, SignalType
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,6 +19,8 @@ class ScannerFilters:
 
     symbol_query: str = ""
     exchange: str | None = None
+    exchanges: frozenset[str] | None = None
+    instrument_types: frozenset[InstrumentType] | None = None
     min_oi_change: float | None = None
     max_oi_change: float | None = None
     min_volume_change: float | None = None
@@ -88,7 +90,16 @@ def apply_filters(
 
     filtered: list[ScannerItem] = []
     for item in items:
-        if filters.exchange is not None and item.exchange != filters.exchange:
+        selected_exchanges = filters.exchanges
+        if selected_exchanges is None and filters.exchange is not None:
+            selected_exchanges = frozenset((filters.exchange,))
+        if selected_exchanges is not None and item.exchange not in selected_exchanges:
+            continue
+        if (
+            filters.instrument_types is not None
+            and InstrumentType(item.instrument_type.removeprefix("USDT "))
+            not in filters.instrument_types
+        ):
             continue
         if (
             filters.symbol_query

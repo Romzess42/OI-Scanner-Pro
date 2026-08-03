@@ -13,7 +13,7 @@ from scanner.filters import (
     calculate_score,
     determine_signal,
 )
-from scanner.models import ScannerItem, SignalType
+from scanner.models import InstrumentType, ScannerItem, SignalType
 
 
 class ScannerFilterTests(TestCase):
@@ -58,6 +58,17 @@ class ScannerFilterTests(TestCase):
     def test_score_rewards_large_changes_and_flat_price_accumulation(self):
         item = self._item(oi=0.30, volume=0.50, price=0.005)
         self.assertEqual(calculate_score(item, SignalThresholds()), 10)
+
+    def test_filters_multiple_exchanges_and_market_types(self):
+        perpetual = self._item(oi=0.3, volume=0.4, price=0.02)
+        spot = replace(perpetual, exchange="Binance", instrument_type="USDT Spot")
+        futures = replace(perpetual, exchange="OKX", instrument_type="USDT Futures")
+        filters = ScannerFilters(
+            exchanges=frozenset(("Binance", "OKX")),
+            instrument_types=frozenset((InstrumentType.SPOT, InstrumentType.FUTURES)),
+        )
+
+        self.assertEqual(apply_filters([perpetual, spot, futures], filters), [spot, futures])
 
     @staticmethod
     def _item(

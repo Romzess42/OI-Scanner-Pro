@@ -1,4 +1,4 @@
-from PySide6.QtCore import QThread, Signal, QObject
+from PySide6.QtCore import QThread, QTimer, Signal, QObject
 from PySide6.QtWidgets import (
     QMainWindow,
     QStatusBar,
@@ -86,6 +86,8 @@ class MainWindow(QMainWindow):
         self._alerts_enabled = self._load_alerts_enabled()
         self._alert_sound_enabled = self._load_alert_sound_enabled()
         self._refresh_worker: ScannerWorker | None = None
+        self._auto_refresh_timer = QTimer(self)
+        self._auto_refresh_timer.timeout.connect(self.refresh_data)
         self.realtime = WebSocketService()
         self.watchlist = WatchlistService(DATABASE_NAME)
         self.alert_service = AlertService()
@@ -110,9 +112,11 @@ class MainWindow(QMainWindow):
             self._apply_current_filters
         )
         self.filters.signal.currentIndexChanged.connect(self._apply_current_filters)
-        self.filters.exchange.currentIndexChanged.connect(self._apply_current_filters)
+        self.filters.exchange.selection_changed.connect(self.refresh_data)
+        self.filters.instrument.selection_changed.connect(self.refresh_data)
         self.filters.search.textChanged.connect(self._apply_current_filters)
         self.filters.watchlist_only.toggled.connect(self._apply_current_filters)
+        self.filters.auto_refresh.interval_changed.connect(self._set_auto_refresh)
         self.table.itemDoubleClicked.connect(self._open_instrument_analysis)
         self.realtime_bridge.status_changed.connect(self._show_connection_status)
         self.realtime_bridge.message_received.connect(self._apply_realtime_message)
@@ -318,6 +322,8 @@ class MainWindow(QMainWindow):
             return
         grouped: dict[str, list[str]] = {}
         for item in items:
+            if item.instrument_type != "USDT Perpetual":
+                continue
             grouped.setdefault(item.exchange, []).append(item.symbol)
         for exchange, symbols in grouped.items():
             symbols = list(dict.fromkeys(symbols))[:REALTIME_SYMBOL_LIMIT]
@@ -360,6 +366,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Export failed", str(error))
 
     def closeEvent(self, event) -> None:
+        self._auto_refresh_timer.stop()
         self.realtime.stop()
         event.accept()
 
@@ -367,6 +374,14 @@ class MainWindow(QMainWindow):
         self.filters.refresh.setEnabled(True)
         self.filters.timeframe.setEnabled(True)
         self._refresh_worker = None
+
+    def _set_auto_refresh(self, seconds: int, label: str) -> None:
+        self._auto_refresh_timer.stop()
+        if seconds:
+            self._auto_refresh_timer.start(seconds * 1_000)
+            self.statusBar().showMessage(f"Auto Refresh: {label}")
+        else:
+            self.statusBar().showMessage("Auto Refresh: Off")
 
     def _create_tray_icon(self) -> None:
         icon = self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon)
