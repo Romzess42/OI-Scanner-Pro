@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Iterable
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 from api.exchange_client import ExchangeClient
 
@@ -118,7 +118,11 @@ class OKXClient(ExchangeClient):
 
     def _get(self, path: str, params: dict[str, Any]) -> list[dict[str, Any]]:
         try:
-            with urlopen(f"{self.BASE_URL}{path}?{urlencode(params)}", timeout=self.REQUEST_TIMEOUT_SECONDS) as response:
+            request = Request(
+                f"{self.BASE_URL}{path}?{urlencode(params)}",
+                headers={"User-Agent": "OI-Scanner-Pro/1.0"},
+            )
+            with urlopen(request, timeout=self.REQUEST_TIMEOUT_SECONDS) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as error:
             raise OKXAPIError(f"Unable to load OKX market data: {error}") from error

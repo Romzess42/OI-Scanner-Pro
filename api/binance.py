@@ -32,17 +32,40 @@ class BinanceClient(ExchangeClient):
 
     @staticmethod
     def market_stream_url(symbols: Iterable[str]) -> str:
-        """Return one combined stream for tickers and public force orders."""
+        """Return tickers, best quotes and public force orders in one stream."""
         streams: list[str] = []
         for symbol in dict.fromkeys(symbols):
-            streams.extend((f"{symbol.lower()}@ticker", f"{symbol.lower()}@forceOrder"))
+            streams.extend(
+                (
+                    f"{symbol.lower()}@ticker",
+                    f"{symbol.lower()}@bookTicker",
+                    f"{symbol.lower()}@forceOrder",
+                )
+            )
         return BinanceClient.WEBSOCKET_URL + "/".join(streams)
 
     @staticmethod
     def parse_ticker_message(message: dict[str, Any]) -> dict[str, Any] | None:
         data = message.get("data", message)
-        if not isinstance(data, dict) or not data.get("s"): return None
-        return {"symbol": data["s"], "lastPrice": data.get("c"), "turnover24h": data.get("q"), "openInterest": None, "fundingRate": None, "price24hPcnt": (BinanceClient._percent_decimal(data.get("P")))}
+        if not isinstance(data, dict) or not data.get("s"):
+            return None
+        if data.get("c") is not None:
+            return {
+                "symbol": data["s"], "lastPrice": data.get("c"),
+                "turnover24h": data.get("q"), "openInterest": None,
+                "fundingRate": None,
+                "price24hPcnt": BinanceClient._percent_decimal(data.get("P")),
+            }
+        # A best bid/ask update is a safe price fallback when the 24-hour ticker
+        # stream is delayed by a network or regional gateway.
+        if data.get("a") is not None or data.get("b") is not None:
+            return {
+                "symbol": data["s"],
+                "lastPrice": data.get("a") or data.get("b"),
+                "turnover24h": None, "openInterest": None,
+                "fundingRate": None, "price24hPcnt": None,
+            }
+        return None
 
     @staticmethod
     def parse_liquidation_message(message: dict[str, Any]) -> list[LiquidationEvent]:

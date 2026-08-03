@@ -51,6 +51,22 @@ class ExchangeManagerTests(TestCase):
             )
         )
 
+    def test_binance_book_ticker_is_a_price_fallback(self):
+        update = BinanceClient.parse_ticker_message(
+            {"stream": "btcusdt@bookTicker", "data": {"s": "BTCUSDT", "b": "99999", "a": "100001"}}
+        )
+
+        self.assertEqual(update["symbol"], "BTCUSDT")
+        self.assertEqual(update["lastPrice"], "100001")
+        self.assertIsNone(update["turnover24h"])
+
+    def test_binance_market_stream_includes_ticker_quote_and_liquidation(self):
+        url = BinanceClient.market_stream_url(["BTCUSDT"])
+
+        self.assertIn("btcusdt@ticker", url)
+        self.assertIn("btcusdt@bookTicker", url)
+        self.assertIn("btcusdt@forceOrder", url)
+
     def test_okx_ohlc_is_reversed_to_chronological_order(self):
         class CandleClient(OKXClient):
             def _get(self, path, params):
