@@ -27,11 +27,10 @@ class LiquidationChart(pg.PlotWidget):
                 notional = float(event["quantity"]) * float(event["price"])
             except (KeyError, TypeError, ValueError):
                 continue
-            # Bybit reports Buy for a liquidated long and Sell for a liquidated short.
-            if event.get("side") == "Buy":
+            if self._is_long_liquidation(event):
                 long_x.append(timestamp)
                 long_y.append(notional)
-            elif event.get("side") == "Sell":
+            elif self._is_short_liquidation(event):
                 short_x.append(timestamp)
                 short_y.append(-notional)
         width = 30.0
@@ -39,3 +38,18 @@ class LiquidationChart(pg.PlotWidget):
             self.addItem(pg.BarGraphItem(x=long_x, height=long_y, width=width, brush="#EF5350"))
         if short_x:
             self.addItem(pg.BarGraphItem(x=short_x, height=short_y, width=width, brush="#42A5F5"))
+
+    @staticmethod
+    def _is_long_liquidation(event: dict[str, object]) -> bool:
+        # Bybit S is the liquidated position side; Binance S is the forced order side.
+        return (
+            (event.get("exchange") == "Bybit" and event.get("side") == "Buy")
+            or (event.get("exchange") == "Binance" and event.get("side") == "SELL")
+        )
+
+    @staticmethod
+    def _is_short_liquidation(event: dict[str, object]) -> bool:
+        return (
+            (event.get("exchange") == "Bybit" and event.get("side") == "Sell")
+            or (event.get("exchange") == "Binance" and event.get("side") == "BUY")
+        )

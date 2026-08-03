@@ -178,7 +178,7 @@ class HistoryRepository:
         with closing(self._connect()) as connection:
             rows = connection.execute(
                 """
-                SELECT timestamp_ms, side, quantity, price
+                SELECT exchange, timestamp_ms, side, quantity, price
                 FROM liquidations
                 WHERE exchange = ? AND symbol = ?
                 ORDER BY timestamp_ms DESC, id DESC LIMIT ?

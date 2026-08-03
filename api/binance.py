@@ -10,6 +10,7 @@ from urllib.parse import urlencode
 from urllib.request import urlopen
 
 from api.exchange_client import ExchangeClient
+from scanner.models import LiquidationEvent
 
 
 class BinanceAPIError(RuntimeError):
@@ -30,10 +31,52 @@ class BinanceClient(ExchangeClient):
         return BinanceClient.WEBSOCKET_URL + "/".join(f"{symbol.lower()}@ticker" for symbol in symbols)
 
     @staticmethod
+    def market_stream_url(symbols: Iterable[str]) -> str:
+        """Return one combined stream for tickers and public force orders."""
+        streams: list[str] = []
+        for symbol in dict.fromkeys(symbols):
+            streams.extend((f"{symbol.lower()}@ticker", f"{symbol.lower()}@forceOrder"))
+        return BinanceClient.WEBSOCKET_URL + "/".join(streams)
+
+    @staticmethod
     def parse_ticker_message(message: dict[str, Any]) -> dict[str, Any] | None:
         data = message.get("data", message)
         if not isinstance(data, dict) or not data.get("s"): return None
         return {"symbol": data["s"], "lastPrice": data.get("c"), "turnover24h": data.get("q"), "openInterest": None, "fundingRate": None, "price24hPcnt": (BinanceClient._percent_decimal(data.get("P")))}
+
+    @staticmethod
+    def parse_liquidation_message(message: dict[str, Any]) -> list[LiquidationEvent]:
+        """Normalize a public USD-M Futures ``forceOrder`` event.
+
+        Binance's combined stream wraps the event in ``data``; direct streams do
+        not.  The raw order side is retained for exchange-specific chart labels.
+        """
+        data = message.get("data", message)
+        if not isinstance(data, dict) or data.get("e") != "forceOrder":
+            return []
+        order = data.get("o")
+        if not isinstance(order, dict):
+            return []
+        try:
+            symbol = str(order["s"])
+            timestamp_ms = int(order.get("T", data["E"]))
+            side = str(order["S"])
+            quantity = float(order["q"])
+            price = float(order.get("ap") or order["p"])
+        except (KeyError, TypeError, ValueError):
+            return []
+        if not symbol or side not in {"BUY", "SELL"} or quantity < 0 or price < 0:
+            return []
+        return [
+            LiquidationEvent(
+                exchange="Binance",
+                symbol=symbol,
+                timestamp_ms=timestamp_ms,
+                side=side,
+                quantity=quantity,
+                price=price,
+            )
+        ]
     TIMEFRAME_INTERVALS = {
         "15m": "15m", "1H": "1h", "4H": "4h", "1D": "1d", "1W": "1w", "1M": "1M"
     }

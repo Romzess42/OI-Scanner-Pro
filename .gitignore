@@ -6,3 +6,4 @@ __pycache__/
 oi_scanner.db
 oi_scanner.db-shm
 oi_scanner.db-wal
+oi_scanner.ini

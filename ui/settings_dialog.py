@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -13,6 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from scanner.filters import SignalThresholds
+from utils.settings import application_settings
 
 
 class SettingsDialog(QDialog):
@@ -47,7 +47,7 @@ class SettingsDialog(QDialog):
         self.license_url = QLineEdit()
         self.update_url = QLineEdit()
         self.telegram_token.setEchoMode(QLineEdit.EchoMode.Password)
-        settings = QSettings("OI Scanner Pro", "OI Scanner Pro")
+        settings = application_settings()
         self.telegram_token.setText(str(settings.value("telegram/token", "")))
         self.telegram_chat_id.setText(str(settings.value("telegram/chat_id", "")))
         self.license_key.setText(str(settings.value("license/key", "")))

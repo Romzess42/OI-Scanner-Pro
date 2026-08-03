@@ -1,4 +1,4 @@
-from PySide6.QtCore import QSettings, QThread, Signal, QObject
+from PySide6.QtCore import QThread, Signal, QObject
 from PySide6.QtWidgets import (
     QMainWindow,
     QStatusBar,
@@ -33,6 +33,7 @@ from services.export_service import ExportService
 from telegram.telegram_bot import TelegramNotifier
 from config import DATABASE_NAME
 from config import REALTIME_ENABLED, REALTIME_SYMBOL_LIMIT
+from utils.settings import application_settings
 
 
 class RealtimeBridge(QObject):
@@ -82,7 +83,7 @@ class MainWindow(QMainWindow):
         self.scanner_service = ScannerService()
         self.alert_manager = LocalAlertManager()
         self.thresholds = self._load_thresholds()
-        self._alerts_enabled = True
+        self._alerts_enabled = self._load_alerts_enabled()
         self._alert_sound_enabled = self._load_alert_sound_enabled()
         self._refresh_worker: ScannerWorker | None = None
         self.realtime = WebSocketService()
@@ -154,7 +155,7 @@ class MainWindow(QMainWindow):
         alerts_menu = menu.addMenu("Alerts")
         self.alerts_action = alerts_menu.addAction("Enable local alerts")
         self.alerts_action.setCheckable(True)
-        self.alerts_action.setChecked(True)
+        self.alerts_action.setChecked(self._alerts_enabled)
         self.alerts_action.toggled.connect(self._set_alerts_enabled)
         self.alert_sound_action = alerts_menu.addAction("Play sound for alerts")
         self.alert_sound_action.setCheckable(True)
@@ -252,7 +253,7 @@ class MainWindow(QMainWindow):
             self.alert_journal.reload()
             if self._alert_sound_enabled:
                 QApplication.beep()
-            settings = QSettings("OI Scanner Pro", "OI Scanner Pro")
+            settings = application_settings()
             TelegramNotifier(str(settings.value("telegram/token", "")), str(settings.value("telegram/chat_id", ""))).send(alert.message)
         if self._tray_icon.isVisible():
             for alert in alerts[:3]:
@@ -273,6 +274,13 @@ class MainWindow(QMainWindow):
             from api.bybit import BybitClient
 
             liquidations = BybitClient.parse_liquidation_message(payload)
+            if liquidations:
+                HistoryRepository(DATABASE_NAME).save_liquidations(liquidations)
+                return
+        if exchange == "Binance":
+            from api.binance import BinanceClient
+
+            liquidations = BinanceClient.parse_liquidation_message(payload)
             if liquidations:
                 HistoryRepository(DATABASE_NAME).save_liquidations(liquidations)
                 return
@@ -320,7 +328,7 @@ class MainWindow(QMainWindow):
                 self.realtime.start(exchange, BybitClient.WEBSOCKET_URL, subscription)
             elif exchange == "Binance":
                 from api.binance import BinanceClient
-                self.realtime.start(exchange, BinanceClient.ticker_stream_url(symbols), None)
+                self.realtime.start(exchange, BinanceClient.market_stream_url(symbols), None)
             elif exchange == "OKX":
                 from api.okx import OKXClient
                 self.realtime.start(exchange, OKXClient.WEBSOCKET_URL, OKXClient.ticker_subscription(symbols))
@@ -370,23 +378,30 @@ class MainWindow(QMainWindow):
         if dialog.exec():
             self.thresholds = dialog.thresholds()
             self._save_thresholds()
-            settings = QSettings("OI Scanner Pro", "OI Scanner Pro")
+            settings = application_settings()
             for key, value in dialog.external_settings().items():
                 settings.setValue(key, value)
 
     def _set_alerts_enabled(self, enabled: bool) -> None:
         self._alerts_enabled = enabled
+        application_settings().setValue("alerts/enabled", enabled)
+
+    @staticmethod
+    def _load_alerts_enabled() -> bool:
+        return str(
+            application_settings().value("alerts/enabled", "true")
+        ).lower() != "false"
 
     def _set_alert_sound_enabled(self, enabled: bool) -> None:
         self._alert_sound_enabled = enabled
-        QSettings("OI Scanner Pro", "OI Scanner Pro").setValue("alerts/sound", enabled)
+        application_settings().setValue("alerts/sound", enabled)
 
     @staticmethod
     def _load_alert_sound_enabled() -> bool:
-        return str(QSettings("OI Scanner Pro", "OI Scanner Pro").value("alerts/sound", "true")).lower() != "false"
+        return str(application_settings().value("alerts/sound", "true")).lower() != "false"
 
     def _load_thresholds(self) -> SignalThresholds:
-        settings = QSettings("OI Scanner Pro", "OI Scanner Pro")
+        settings = application_settings()
         return SignalThresholds(
             alert_oi_change=float(settings.value("alerts/oi", 0.20)),
             alert_volume_change=float(settings.value("alerts/volume", 0.20)),
@@ -395,18 +410,18 @@ class MainWindow(QMainWindow):
         )
 
     def _save_thresholds(self) -> None:
-        settings = QSettings("OI Scanner Pro", "OI Scanner Pro")
+        settings = application_settings()
         settings.setValue("alerts/oi", self.thresholds.alert_oi_change)
         settings.setValue("alerts/volume", self.thresholds.alert_volume_change)
         settings.setValue("alerts/funding", self.thresholds.alert_funding_rate)
         settings.setValue("alerts/score", self.thresholds.alert_score)
 
     def _check_license(self) -> None:
-        settings = QSettings("OI Scanner Pro", "OI Scanner Pro")
+        settings = application_settings()
         valid = LicenseService(str(settings.value("license/url", ""))).validate(str(settings.value("license/key", "")))
         self.statusBar().showMessage("License valid" if valid else "License is not configured or invalid")
 
     def _check_updates(self) -> None:
-        settings = QSettings("OI Scanner Pro", "OI Scanner Pro")
+        settings = application_settings()
         version = UpdateService(str(settings.value("updates/url", ""))).latest_version()
         self.statusBar().showMessage(f"Latest version: {version}" if version else "Update service is not configured")

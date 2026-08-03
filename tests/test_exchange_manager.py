@@ -5,6 +5,7 @@ from unittest import TestCase
 from api.exchange_manager import ExchangeManager
 from api.binance import BinanceClient
 from api.okx import OKXClient
+from charts.liquidation_chart import LiquidationChart
 
 
 class FakeClient:
@@ -28,6 +29,27 @@ class ExchangeManagerTests(TestCase):
 
         self.assertEqual(candles[0]["timestamp_ms"], 1000.0)
         self.assertEqual(candles[-1]["close"], 3.0)
+
+    def test_binance_force_order_is_normalized(self):
+        events = BinanceClient.parse_liquidation_message(
+            {
+                "stream": "btcusdt@forceOrder",
+                "data": {
+                    "e": "forceOrder", "E": 1_700_000_000_000,
+                    "o": {"s": "BTCUSDT", "S": "SELL", "q": "0.25", "p": "100000", "ap": "99900"},
+                },
+            }
+        )
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].exchange, "Binance")
+        self.assertEqual(events[0].side, "SELL")
+        self.assertEqual(events[0].price, 99900.0)
+        self.assertTrue(
+            LiquidationChart._is_long_liquidation(
+                {"exchange": "Binance", "side": events[0].side}
+            )
+        )
 
     def test_okx_ohlc_is_reversed_to_chronological_order(self):
         class CandleClient(OKXClient):
